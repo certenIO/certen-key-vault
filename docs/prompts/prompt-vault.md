@@ -1,0 +1,11 @@
+Use Claude planning mode: deeply review the certain wallet, and authority, editor, and the Accumulate bridge, in order to understand every aspect required of key signing key generation and cryptologic functions required. We need to create a hyper-focused, minimalistic browser-extension Certen key 
+vault and signer for users to generate keys, securely store them safely and use them to sign and approve all required actions/transactions for the certain protocol. I’m looking for the web interfaces and they’re backend to do most of the work, and ideally, we have a minimalistic secure, key vault and signer as an extension in the browser that just allows the user to again generate keys and sign transactions created by the backend and user interface. So I’m looking for the user the web services in the back in the support sum to do all the work except the signing of transactions as we can’t have the keys hardcoded and the user will control these. It will be required to have a hyper detailed understanding of all places in situations that currently the code uses cryptographic keys to sign actions currently in developed in test mode we have various keys stored in an environmental file however, upon deployment for our test network, we need a solution where decentralize users can create store and use securely cryptographic keys.  
+Here are the three directories for the certain Wallet, abstract account, the certain authority editor in the Accumulate bridge:
+C:\Accumulate_Stuff\certen\account-abstraction
+C:\Accumulate_Stuff\certen\certen-protocol\services\accumulate-bridge
+C:\Accumulate_Stuff\certen\certen-protocol\web\authority-editor
+C:\Accumulate_Stuff\certen\certen-protocol\web\wallet-interface
+
+Here is the current environmental file for our test testing: C:\Accumulate_Stuff\certen\certen-protocol\.env
+
+Your task again is to conduct exhaustive analysis of the services and capabilities. Identify all uses in need for users, cryptographic, keys, and signatures, and then create a thorough and hyper detailed implementation plan in order to build the ideal solution which we currently assess but are open to your alternative recommendations to be a key vault in signer embedded in the browser as extension. Enter planning mode and begin this task now. Save your produced plan here: C:\Accumulate_Stuff\certen\key-vault-signer\docs\implementation-docs
