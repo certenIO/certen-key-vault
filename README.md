@@ -68,6 +68,13 @@ Key capabilities:
 - Google Chrome or Chromium-based browser
 - Node.js 18+ (for building from source)
 
+### Installing Node.js
+
+If you don't have Node.js 18+ installed (`node -v` to check):
+
+- **macOS**: `brew install node@22` or download from [nodejs.org](https://nodejs.org)
+- **Windows**: Download the LTS installer from [nodejs.org](https://nodejs.org) or run `winget install OpenJS.NodeJS.LTS`
+
 ## Quick Start
 
 ```bash
