@@ -24,7 +24,7 @@ let requestCounter = 0;
 // Provider state
 let isConnected = false;
 let accounts: CertenAccount[] = [];
-let currentNetwork: 'mainnet' | 'testnet' | 'devnet' = 'devnet';
+let currentNetwork: 'mainnet' | 'testnet' | 'devnet' = 'testnet';
 
 // Event handlers
 const eventHandlers = new Map<string, Set<(data: unknown) => void>>();
@@ -98,7 +98,7 @@ const certenProvider = {
         network: string;
       };
       accounts = result.accounts || [];
-      currentNetwork = (result.network as 'mainnet' | 'testnet' | 'devnet') || 'devnet';
+      currentNetwork = (result.network as 'mainnet' | 'testnet' | 'devnet') || 'testnet';
       isConnected = accounts.length > 0;
       return { accounts, connected: isConnected };
     } catch (error) {
@@ -180,6 +180,127 @@ const certenProvider = {
     return sendRequest(method, [hashData]) as Promise<{
       signature: string;
       publicKey: string;
+    }>;
+  },
+
+  /**
+   * Signs a pending transaction for multi-sig approval.
+   *
+   * @param params.transactionHash - The 64-char hex transaction hash (for display)
+   * @param params.dataForSignature - The complete hash to sign (computed by api-bridge)
+   * @param params.signer - The key page URL (e.g., acc://adi.acme/book/1)
+   * @param params.signerVersion - Key page version (default: 1)
+   * @param params.timestamp - Microseconds timestamp (must match api-bridge)
+   * @param params.delegators - Optional delegation chain
+   * @param params.humanReadable - Human-readable description for the approval popup
+   * @returns The signature, public key, and timestamp used during signing
+   */
+  async signPendingTransaction(params: {
+    transactionHash: string;
+    dataForSignature?: string;
+    signer: string;
+    signerVersion?: number;
+    timestamp?: number;
+    delegators?: string[];
+    humanReadable?: {
+      action: string;
+      from?: string;
+      to?: string;
+      description?: string;
+      [key: string]: unknown;
+    };
+  }): Promise<{ signature: string; publicKey: string; timestamp?: number }> {
+    return sendRequest('acc_signPendingTransaction', [params]) as Promise<{
+      signature: string;
+      publicKey: string;
+      timestamp?: number;
+    }>;
+  },
+
+  /**
+   * Signs a personal message using EIP-191 (personal_sign).
+   * This is used for off-chain signature verification.
+   *
+   * @param message - The message to sign (will be prefixed with EIP-191 header)
+   * @param address - The EVM address that should sign (must match a secp256k1 key)
+   * @returns The signature and public key
+   */
+  async signPersonalMessage(
+    message: string,
+    address: string
+  ): Promise<{ signature: string; publicKey: string }> {
+    return sendRequest('eth_signPersonalMessage', [{
+      message,
+      address,
+      humanReadable: {
+        action: 'Sign Personal Message',
+        memo: message.slice(0, 100) + (message.length > 100 ? '...' : '')
+      }
+    }]) as Promise<{
+      signature: string;
+      publicKey: string;
+    }>;
+  },
+
+  // ==========================================================================
+  // Key Selection
+  // ==========================================================================
+
+  /**
+   * Opens a popup for the user to select which key to use.
+   * Returns the selected key's public key and SHA-256 hash.
+   *
+   * @param params.keyType - Filter keys by type (optional)
+   * @param params.purpose - Description shown to user (optional)
+   * @returns Selected key info including publicKey and publicKeyHash (SHA-256)
+   */
+  async selectKey(params?: {
+    keyType?: 'ed25519' | 'secp256k1' | 'bls12381';
+    purpose?: string;
+  }): Promise<{
+    publicKey: string;
+    publicKeyHash: string;
+    keyId: string;
+    keyName: string;
+    keyType: 'ed25519' | 'secp256k1' | 'bls12381';
+    accumulateUrl?: string;
+    evmAddress?: string;
+  }> {
+    return sendRequest('acc_selectKey', [params || {}]) as Promise<{
+      publicKey: string;
+      publicKeyHash: string;
+      keyId: string;
+      keyName: string;
+      keyType: 'ed25519' | 'secp256k1' | 'bls12381';
+      accumulateUrl?: string;
+      evmAddress?: string;
+    }>;
+  },
+
+  // ==========================================================================
+  // Key Metadata Management
+  // ==========================================================================
+
+  /**
+   * Updates metadata for a key in the vault.
+   * Can identify the key by either publicKey or keyId.
+   *
+   * @param params.publicKey - The public key (hex) to identify the key
+   * @param params.keyId - Alternative: the key's internal ID
+   * @param params.metadata - Metadata to update (merged with existing)
+   * @returns Success status and keyId
+   */
+  async updateKeyMetadata(params: {
+    publicKey?: string;
+    keyId?: string;
+    metadata: {
+      keyPageUrl?: string;
+      [key: string]: unknown;
+    };
+  }): Promise<{ success: boolean; keyId?: string }> {
+    return sendRequest('acc_updateKeyMetadata', [params]) as Promise<{
+      success: boolean;
+      keyId?: string;
     }>;
   },
 
@@ -291,7 +412,7 @@ window.addEventListener('message', (event) => {
       accounts = data?.accounts || [];
       isConnected = accounts.length > 0;
     } else if (eventType === 'networkChanged') {
-      currentNetwork = data?.network || 'devnet';
+      currentNetwork = data?.network || 'testnet';
     } else if (eventType === 'disconnect') {
       isConnected = false;
       accounts = [];

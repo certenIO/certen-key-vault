@@ -94,16 +94,40 @@ const Setup: React.FC<SetupProps> = ({ onComplete }) => {
 
   const renderPasswordStep = () => (
     <div className="setup-container">
-      <div className="setup-icon">🔒</div>
-      <h1 className="setup-title">Create Your Vault</h1>
+      <div className="setup-icon">{importMode ? '📥' : '🔒'}</div>
+      <h1 className="setup-title">
+        {importMode ? 'Import Existing Wallet' : 'Create Your Vault'}
+      </h1>
       <p className="setup-description">
-        Set a strong password to encrypt your keys.
-        This password will be required to unlock your vault.
+        {importMode
+          ? 'Enter your recovery phrase and set a password to restore your wallet.'
+          : 'Set a strong password to encrypt your keys. This password will be required to unlock your vault.'
+        }
       </p>
+
+      {importMode && (
+        <div className="form-group text-left">
+          <label className="form-label">Recovery Phrase</label>
+          <textarea
+            className="form-input"
+            value={importMnemonic}
+            onChange={(e) => setImportMnemonic(e.target.value)}
+            placeholder="Enter your 12 or 24 word recovery phrase"
+            rows={3}
+            style={{ resize: 'none' }}
+            autoFocus
+          />
+          <p className="form-hint">
+            Enter your BIP-39 recovery phrase, words separated by spaces.
+          </p>
+        </div>
+      )}
 
       <form onSubmit={handlePasswordSubmit}>
         <div className="form-group text-left">
-          <label className="form-label">Password</label>
+          <label className="form-label">
+            {importMode ? 'New Vault Password' : 'Password'}
+          </label>
           <div className="password-input-wrapper">
             <input
               type={showPassword ? 'text' : 'password'}
@@ -111,7 +135,7 @@ const Setup: React.FC<SetupProps> = ({ onComplete }) => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter password (min 8 characters)"
-              autoFocus
+              autoFocus={!importMode}
             />
             <button
               type="button"
@@ -139,9 +163,12 @@ const Setup: React.FC<SetupProps> = ({ onComplete }) => {
         <button
           type="submit"
           className="btn btn-primary btn-full"
-          disabled={loading || !password || !confirmPassword}
+          disabled={loading || !password || !confirmPassword || (importMode && !importMnemonic.trim())}
         >
-          {loading ? 'Creating...' : 'Create Vault'}
+          {loading
+            ? (importMode ? 'Importing...' : 'Creating...')
+            : (importMode ? 'Import & Restore Wallet' : 'Create Vault')
+          }
         </button>
       </form>
 
@@ -149,28 +176,14 @@ const Setup: React.FC<SetupProps> = ({ onComplete }) => {
         <button
           type="button"
           className="btn btn-secondary btn-full"
-          onClick={() => setImportMode(!importMode)}
+          onClick={() => {
+            setImportMode(!importMode);
+            setError(null);
+          }}
         >
-          {importMode ? 'Generate New Wallet' : 'Import Existing Wallet'}
+          {importMode ? 'Create New Wallet Instead' : 'Import Existing Wallet'}
         </button>
       </div>
-
-      {importMode && (
-        <div className="form-group text-left mt-16">
-          <label className="form-label">Recovery Phrase</label>
-          <textarea
-            className="form-input"
-            value={importMnemonic}
-            onChange={(e) => setImportMnemonic(e.target.value)}
-            placeholder="Enter your 12 or 24 word recovery phrase"
-            rows={3}
-            style={{ resize: 'none' }}
-          />
-          <p className="form-hint">
-            Enter your BIP-39 recovery phrase, words separated by spaces.
-          </p>
-        </div>
-      )}
 
       {error && (
         <div className="mt-16">

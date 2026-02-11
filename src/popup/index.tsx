@@ -14,7 +14,7 @@ if (urlParams.get('fullpage') === 'true') {
 }
 
 // Get initial mode from URL
-const initialMode = urlParams.get('mode') as 'setup' | 'unlock' | 'approve' | null;
+const initialMode = urlParams.get('mode') as 'setup' | 'unlock' | 'approve' | 'select' | null;
 
 // Mount React app
 const container = document.getElementById('root');

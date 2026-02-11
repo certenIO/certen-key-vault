@@ -11,7 +11,7 @@ export const STORAGE_KEY_SETTINGS = 'certen_settings_v1';
 
 // Default settings
 export const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
-export const DEFAULT_NETWORK = 'devnet';
+export const DEFAULT_NETWORK = 'testnet';
 
 // Networks
 export const NETWORKS = {

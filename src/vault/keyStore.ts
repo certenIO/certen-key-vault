@@ -33,18 +33,32 @@ import {
 
 import { generateED25519Key, ed25519FromPrivateKey, generateLiteAccountUrl, getPublicKeyHash } from './ed25519';
 import { generateSecp256k1Key, secp256k1FromPrivateKeyHex, getEthAddress } from './secp256k1';
+import { generateBLS12381Key, bls12381FromPrivateKeyHex } from './bls12381';
 import {
   generateMnemonic,
   validateMnemonic,
   deriveED25519FromMnemonic,
-  deriveSecp256k1FromMnemonic
+  deriveSecp256k1FromMnemonic,
+  deriveBLS12381FromMnemonic,
+  BLS_COIN_TYPE
 } from './mnemonic';
+import {
+  getSolanaAddress,
+  getAptosAddress,
+  getSuiAddress,
+  getTonAddress,
+  getNearAddress,
+  getCosmosAddresses,
+  getTronAddress
+} from './addresses';
+import { predictCertenAccountForChain, CERTEN_FACTORIES } from './create2';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const STORAGE_KEY = 'certen_vault_v1';
+const STORAGE_KEY = 'certen_vault_v2';
+const STORAGE_KEY_V1 = 'certen_vault_v1';
 const DEFAULT_AUTO_LOCK_TIMEOUT = 15 * 60 * 1000; // 15 minutes
 
 // =============================================================================
@@ -64,10 +78,19 @@ export class KeyStore {
 
   /**
    * Checks if the vault has been initialized (password set).
+   * Also checks for v1 vaults that need migration.
    */
   async isInitialized(): Promise<boolean> {
-    const result = await chrome.storage.local.get(STORAGE_KEY);
-    return !!result[STORAGE_KEY];
+    const result = await chrome.storage.local.get([STORAGE_KEY, STORAGE_KEY_V1]);
+    return !!(result[STORAGE_KEY] || result[STORAGE_KEY_V1]);
+  }
+
+  /**
+   * Checks if there's a v1 vault that needs migration.
+   */
+  async needsMigration(): Promise<boolean> {
+    const result = await chrome.storage.local.get([STORAGE_KEY, STORAGE_KEY_V1]);
+    return !result[STORAGE_KEY] && !!result[STORAGE_KEY_V1];
   }
 
   /**
@@ -162,14 +185,22 @@ export class KeyStore {
 
   /**
    * Unlocks the vault with the given password.
+   * Automatically migrates v1 vaults to v2 format.
    *
    * @param password - User password
    * @returns true if successful
    * @throws Error if password is incorrect or vault not initialized
    */
   async unlock(password: string): Promise<boolean> {
-    const result = await chrome.storage.local.get(STORAGE_KEY);
-    const vaultData: EncryptedVaultData = result[STORAGE_KEY];
+    const result = await chrome.storage.local.get([STORAGE_KEY, STORAGE_KEY_V1]);
+    let vaultData: EncryptedVaultData = result[STORAGE_KEY];
+    let needsMigration = false;
+
+    // Check for v1 vault if v2 doesn't exist
+    if (!vaultData && result[STORAGE_KEY_V1]) {
+      vaultData = result[STORAGE_KEY_V1];
+      needsMigration = true;
+    }
 
     if (!vaultData) {
       throw new Error('Vault not initialized');
@@ -190,12 +221,32 @@ export class KeyStore {
       this.payload = JSON.parse(decrypted);
       this.unlockTimestamp = Date.now();
 
+      // Migrate v1 to v2 if needed
+      if (needsMigration) {
+        console.log('[KeyStore] Migrating vault from v1 to v2...');
+        await this.migrateFromV1();
+      }
+
       return true;
     } catch (e) {
       this.derivedKey = null;
       this.salt = null;
       throw new Error('Invalid password');
     }
+  }
+
+  /**
+   * Migrates a v1 vault to v2 format.
+   * This is called automatically during unlock if needed.
+   */
+  private async migrateFromV1(): Promise<void> {
+    // Update vault version and persist to v2 key
+    await this.persist();
+
+    // Remove old v1 key
+    await chrome.storage.local.remove(STORAGE_KEY_V1);
+
+    console.log('[KeyStore] Migration from v1 to v2 complete');
   }
 
   /**
@@ -249,7 +300,7 @@ export class KeyStore {
   /**
    * Generates and adds a new key to the vault.
    *
-   * @param type - Key type ('ed25519' or 'secp256k1')
+   * @param type - Key type ('ed25519', 'secp256k1', or 'bls12381')
    * @param name - User-friendly name for the key
    * @returns The created key (without private key)
    */
@@ -267,11 +318,29 @@ export class KeyStore {
       publicKey = keyPair.publicKey;
       privateKey = keyPair.privateKey;
       metadata.accumulateUrl = await generateLiteAccountUrl(publicKey);
-    } else {
+      // Compute multi-chain addresses for ED25519
+      metadata.solanaAddress = getSolanaAddress(publicKey);
+      metadata.aptosAddress = getAptosAddress(publicKey);
+      metadata.suiAddress = getSuiAddress(publicKey);
+      metadata.tonAddress = getTonAddress(publicKey);
+      metadata.nearAddress = getNearAddress(publicKey);
+    } else if (type === 'secp256k1') {
       const keyPair = generateSecp256k1Key(false);
       publicKey = keyPair.publicKey;
       privateKey = keyPair.privateKey;
       metadata.evmAddress = getEthAddress(publicKey);
+      // Compute TRON address using uncompressed public key
+      metadata.tronAddress = getTronAddress(publicKey);
+      // Compute Cosmos addresses using compressed public key
+      const compressedKeyPair = secp256k1FromPrivateKeyHex(toHex(privateKey), true);
+      metadata.cosmosAddresses = getCosmosAddresses(compressedKeyPair.publicKey);
+    } else if (type === 'bls12381') {
+      const keyPair = generateBLS12381Key();
+      publicKey = keyPair.publicKey;
+      privateKey = keyPair.privateKey;
+      metadata.blsPublicKey = toHex(publicKey);
+    } else {
+      throw new Error(`Unsupported key type: ${type}`);
     }
 
     const key: StoredKey = {
@@ -297,7 +366,7 @@ export class KeyStore {
   /**
    * Derives a new key from the stored mnemonic.
    *
-   * @param type - Key type ('ed25519' or 'secp256k1')
+   * @param type - Key type ('ed25519', 'secp256k1', or 'bls12381')
    * @param name - User-friendly name for the key
    * @returns The created key (without private key)
    */
@@ -321,9 +390,16 @@ export class KeyStore {
       .filter(k => k.type === type && k.derivationPath)
       .map(k => k.derivationPath!);
 
-    const pathPrefix = type === 'ed25519'
-      ? `m/44'/540'/0'/0'`
-      : `m/44'/60'/0'/0`;
+    let pathPrefix: string;
+    if (type === 'ed25519') {
+      pathPrefix = `m/44'/540'/0'/0'`;
+    } else if (type === 'secp256k1') {
+      pathPrefix = `m/44'/60'/0'/0`;
+    } else if (type === 'bls12381') {
+      pathPrefix = `m/${BLS_COIN_TYPE}/60/0/0`;
+    } else {
+      throw new Error(`Unsupported key type: ${type}`);
+    }
 
     let nextIndex = 0;
     for (const path of existingPaths) {
@@ -344,12 +420,31 @@ export class KeyStore {
       privateKey = derived.privateKey;
       derivationPath = derived.path;
       metadata.accumulateUrl = await generateLiteAccountUrl(publicKey);
-    } else {
+      // Compute multi-chain addresses for ED25519
+      metadata.solanaAddress = getSolanaAddress(publicKey);
+      metadata.aptosAddress = getAptosAddress(publicKey);
+      metadata.suiAddress = getSuiAddress(publicKey);
+      metadata.tonAddress = getTonAddress(publicKey);
+      metadata.nearAddress = getNearAddress(publicKey);
+    } else if (type === 'secp256k1') {
       const derived = deriveSecp256k1FromMnemonic(this.payload!.mnemonic, nextIndex);
       publicKey = derived.publicKey;
       privateKey = derived.privateKey;
       derivationPath = derived.path;
       metadata.evmAddress = getEthAddress(publicKey);
+      // Compute TRON address using uncompressed public key
+      metadata.tronAddress = getTronAddress(publicKey);
+      // Compute Cosmos addresses using compressed public key
+      const compressedDerived = deriveSecp256k1FromMnemonic(this.payload!.mnemonic, nextIndex, 0, true);
+      metadata.cosmosAddresses = getCosmosAddresses(compressedDerived.publicKey);
+    } else if (type === 'bls12381') {
+      const derived = deriveBLS12381FromMnemonic(this.payload!.mnemonic, nextIndex);
+      publicKey = derived.publicKey;
+      privateKey = derived.privateKey;
+      derivationPath = derived.path;
+      metadata.blsPublicKey = toHex(publicKey);
+    } else {
+      throw new Error(`Unsupported key type: ${type}`);
     }
 
     const key: StoredKey = {
@@ -375,7 +470,7 @@ export class KeyStore {
   /**
    * Imports a key from a hex-encoded private key.
    *
-   * @param type - Key type
+   * @param type - Key type ('ed25519', 'secp256k1', or 'bls12381')
    * @param privateKeyHex - Hex-encoded private key
    * @param name - User-friendly name
    * @returns The imported key (without private key)
@@ -394,11 +489,29 @@ export class KeyStore {
       publicKey = keyPair.publicKey;
       privateKey = keyPair.privateKey;
       metadata.accumulateUrl = await generateLiteAccountUrl(publicKey);
-    } else {
+      // Compute multi-chain addresses for ED25519
+      metadata.solanaAddress = getSolanaAddress(publicKey);
+      metadata.aptosAddress = getAptosAddress(publicKey);
+      metadata.suiAddress = getSuiAddress(publicKey);
+      metadata.tonAddress = getTonAddress(publicKey);
+      metadata.nearAddress = getNearAddress(publicKey);
+    } else if (type === 'secp256k1') {
       const keyPair = secp256k1FromPrivateKeyHex(privateKeyHex, false);
       publicKey = keyPair.publicKey;
       privateKey = keyPair.privateKey;
       metadata.evmAddress = getEthAddress(publicKey);
+      // Compute TRON address using uncompressed public key
+      metadata.tronAddress = getTronAddress(publicKey);
+      // Compute Cosmos addresses using compressed public key
+      const compressedKeyPair = secp256k1FromPrivateKeyHex(privateKeyHex, true);
+      metadata.cosmosAddresses = getCosmosAddresses(compressedKeyPair.publicKey);
+    } else if (type === 'bls12381') {
+      const keyPair = bls12381FromPrivateKeyHex(privateKeyHex);
+      publicKey = keyPair.publicKey;
+      privateKey = keyPair.privateKey;
+      metadata.blsPublicKey = toHex(publicKey);
+    } else {
+      throw new Error(`Unsupported key type: ${type}`);
     }
 
     const key: StoredKey = {
@@ -507,7 +620,7 @@ export class KeyStore {
   }
 
   /**
-   * Finds a key by its Accumulate URL.
+   * Finds a key by its Accumulate URL (lite account URL).
    */
   findKeyByAccumulateUrl(url: string): StoredKey | undefined {
     if (!this.isUnlocked()) {
@@ -515,6 +628,37 @@ export class KeyStore {
     }
 
     return this.payload!.keys.find(k => k.metadata.accumulateUrl === url);
+  }
+
+  /**
+   * Finds a key by its key page URL (e.g., acc://adi.acme/book/1).
+   * This is used when signing transactions where the signer is a key page.
+   */
+  findKeyByKeyPageUrl(keyPageUrl: string): StoredKey | undefined {
+    if (!this.isUnlocked()) {
+      throw new Error('Vault is locked');
+    }
+
+    const normalizedUrl = keyPageUrl.toLowerCase();
+    return this.payload!.keys.find(
+      k => k.metadata.keyPageUrl?.toLowerCase() === normalizedUrl
+    );
+  }
+
+  /**
+   * Finds a key by any Accumulate URL - checks both lite account URL and key page URL.
+   * Use this when you don't know which type of URL you have.
+   */
+  findKeyByAnyAccumulateUrl(url: string): StoredKey | undefined {
+    if (!this.isUnlocked()) {
+      throw new Error('Vault is locked');
+    }
+
+    const normalizedUrl = url.toLowerCase();
+    return this.payload!.keys.find(
+      k => k.metadata.accumulateUrl?.toLowerCase() === normalizedUrl ||
+           k.metadata.keyPageUrl?.toLowerCase() === normalizedUrl
+    );
   }
 
   /**
@@ -542,6 +686,119 @@ export class KeyStore {
     return this.payload!.keys
       .filter(k => k.type === type)
       .map(k => ({ ...k, privateKey: '[REDACTED]' }));
+  }
+
+  /**
+   * Finds a key by its BLS public key.
+   */
+  findKeyByBlsPublicKey(blsPublicKey: string): StoredKey | undefined {
+    if (!this.isUnlocked()) {
+      throw new Error('Vault is locked');
+    }
+
+    const normalizedKey = blsPublicKey.toLowerCase().replace(/^0x/, '');
+    return this.payload!.keys.find(
+      k => k.metadata.blsPublicKey?.toLowerCase().replace(/^0x/, '') === normalizedKey
+    );
+  }
+
+  /**
+   * Finds a key by its TRON address.
+   */
+  findKeyByTronAddress(address: string): StoredKey | undefined {
+    if (!this.isUnlocked()) {
+      throw new Error('Vault is locked');
+    }
+
+    return this.payload!.keys.find(k => k.metadata.tronAddress === address);
+  }
+
+  // ==========================================================================
+  // Multi-Chain Address Methods
+  // ==========================================================================
+
+  /**
+   * Computes or retrieves multi-chain addresses for a key.
+   * This is lazy - it computes addresses if not already stored.
+   *
+   * @param keyId - ID of the key
+   * @returns Record of chain -> address
+   */
+  async computeMultiChainAddresses(keyId: string): Promise<Record<string, string>> {
+    if (!this.isUnlocked()) {
+      throw new Error('Vault is locked');
+    }
+
+    const key = this.payload!.keys.find(k => k.id === keyId);
+    if (!key) {
+      throw new Error('Key not found');
+    }
+
+    const addresses: Record<string, string> = {};
+
+    if (key.type === 'ed25519') {
+      const pubKey = fromHex(key.publicKey);
+      addresses.accumulate = key.metadata.accumulateUrl || '';
+      addresses.solana = key.metadata.solanaAddress || getSolanaAddress(pubKey);
+      addresses.aptos = key.metadata.aptosAddress || getAptosAddress(pubKey);
+      addresses.sui = key.metadata.suiAddress || getSuiAddress(pubKey);
+      addresses.ton = key.metadata.tonAddress || getTonAddress(pubKey);
+      addresses.near = key.metadata.nearAddress || getNearAddress(pubKey);
+    } else if (key.type === 'secp256k1') {
+      addresses.ethereum = key.metadata.evmAddress || '';
+      addresses.tron = key.metadata.tronAddress || '';
+      if (key.metadata.cosmosAddresses) {
+        Object.assign(addresses, key.metadata.cosmosAddresses);
+      }
+    } else if (key.type === 'bls12381') {
+      addresses.blsPublicKey = key.metadata.blsPublicKey || '';
+    }
+
+    return addresses;
+  }
+
+  /**
+   * Predicts a CREATE2 address for a key on a specific chain.
+   *
+   * @param keyId - ID of the key
+   * @param adiUrl - Accumulate ADI URL
+   * @param chainId - EVM chain ID
+   * @returns Predicted address or null if not supported
+   */
+  async predictCreate2Address(
+    keyId: string,
+    adiUrl: string,
+    chainId: number
+  ): Promise<string | null> {
+    if (!this.isUnlocked()) {
+      throw new Error('Vault is locked');
+    }
+
+    const key = this.payload!.keys.find(k => k.id === keyId);
+    if (!key) {
+      throw new Error('Key not found');
+    }
+
+    // Check if we already have this prediction cached
+    const cacheKey = `${chainId}`;
+    if (key.metadata.create2Addresses?.[cacheKey]) {
+      return key.metadata.create2Addresses[cacheKey];
+    }
+
+    // Predict the address
+    const predicted = predictCertenAccountForChain(adiUrl, key.publicKey, chainId);
+    if (!predicted) {
+      return null;
+    }
+
+    // Cache the prediction
+    if (!key.metadata.create2Addresses) {
+      key.metadata.create2Addresses = {};
+    }
+    key.metadata.create2Addresses[cacheKey] = predicted;
+    await this.persist();
+
+    return predicted;
   }
 
   // ==========================================================================
@@ -618,7 +875,7 @@ export class KeyStore {
     const { iv, ciphertext } = await encrypt(payloadJson, this.derivedKey);
 
     const vaultData: EncryptedVaultData = {
-      version: 1,
+      version: 2,
       salt: toBase64(this.salt),
       iv: toBase64(iv),
       encryptedPayload: toBase64(ciphertext),

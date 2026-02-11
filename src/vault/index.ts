@@ -49,6 +49,59 @@ export {
   type EthereumSignature
 } from './secp256k1';
 
+// BLS12-381 operations
+export {
+  generateBLS12381Key,
+  bls12381FromPrivateKeyHex,
+  bls12381FromSeed,
+  signBLS12381,
+  signBLS12381Hex,
+  verifyBLS12381,
+  verifyBLS12381Hex,
+  aggregateSignatures,
+  aggregateSignaturesHex,
+  aggregatePublicKeys,
+  verifyAggregate,
+  getPublicKeyFromPrivate,
+  isValidPublicKey,
+  isValidSignature,
+  type BLS12381KeyPair
+} from './bls12381';
+
+// Multi-chain address derivation
+export {
+  getSolanaAddress,
+  getCosmosAddress,
+  getCosmosAddresses,
+  getAptosAddress,
+  getSuiAddress,
+  getTonAddress,
+  getNearAddress,
+  getTronAddress,
+  getED25519ChainAddresses,
+  getSecp256k1ChainAddresses,
+  isValidCosmosAddress,
+  isValidSolanaAddress,
+  isValidTronAddress,
+  getCosmosAddressPrefix,
+  COSMOS_CHAIN_PREFIXES
+} from './addresses';
+
+// CREATE2 address prediction
+export {
+  computeCreate2Address,
+  hashInitCode,
+  generateCertenAccountSalt,
+  getMinimalProxyInitCodeHash,
+  predictCertenAccountAddress,
+  predictCertenAccountForChain,
+  isValidEvmAddress,
+  checksumAddress,
+  CERTEN_FACTORIES,
+  type Create2Params,
+  type CertenAccountParams
+} from './create2';
+
 // Mnemonic and HD derivation
 export {
   generateMnemonic,
@@ -56,14 +109,18 @@ export {
   mnemonicToSeed,
   deriveED25519FromMnemonic,
   deriveSecp256k1FromMnemonic,
+  deriveBLS12381FromMnemonic,
   deriveAllKeysFromMnemonic,
   getNextDerivationIndex,
   ACCUMULATE_COIN_TYPE,
   ETHEREUM_COIN_TYPE,
+  BLS_COIN_TYPE,
   DEFAULT_ACCUMULATE_PATH,
   DEFAULT_ETHEREUM_PATH,
+  DEFAULT_BLS_PATH,
   type DerivedED25519Key,
-  type DerivedSecp256k1Key
+  type DerivedSecp256k1Key,
+  type DerivedBLS12381Key
 } from './mnemonic';
 
 // Key Store

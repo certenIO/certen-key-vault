@@ -6,7 +6,7 @@
 // Key Types
 // =============================================================================
 
-export type KeyType = 'ed25519' | 'secp256k1';
+export type KeyType = 'ed25519' | 'secp256k1' | 'bls12381';
 
 export interface StoredKey {
   id: string;                         // UUID
@@ -25,6 +25,23 @@ export interface KeyMetadata {
   keyPageUrl?: string;                // acc://adi.acme/book/1 for keypages
   evmAddress?: string;                // 0x... for secp256k1 keys
   mnemonic?: boolean;                 // true if derived from mnemonic
+
+  // Multi-chain addresses (ED25519)
+  solanaAddress?: string;             // Base58 for ED25519
+  aptosAddress?: string;              // 0x + SHA3-256 for ED25519
+  suiAddress?: string;                // 0x + Blake2b for ED25519
+  tonAddress?: string;                // 0: + SHA256 for ED25519
+  nearAddress?: string;               // Hex string for ED25519
+
+  // Multi-chain addresses (secp256k1)
+  tronAddress?: string;               // Base58Check with 0x41 prefix for secp256k1
+  cosmosAddresses?: Record<string, string>;  // { osmosis: 'osmo1...', neutron: 'neutron1...' }
+
+  // BLS
+  blsPublicKey?: string;              // 48-byte BLS public key (hex)
+
+  // CREATE2 predictions
+  create2Addresses?: Record<string, string>;  // { [factoryName]: '0x...' }
 }
 
 // =============================================================================
@@ -62,10 +79,13 @@ export interface VaultMetadata {
 
 export type SignRequestType =
   | 'acc_signTransaction'
+  | 'acc_signPendingTransaction'
   | 'acc_signHash'
   | 'eth_signHash'
   | 'eth_signTypedData'
-  | 'certen_signIntent';
+  | 'eth_signPersonalMessage'
+  | 'certen_signIntent'
+  | 'bls_signHash';
 
 export type SignRequestStatus =
   | 'pending'
@@ -86,8 +106,11 @@ export interface SignRequest {
 export type SignRequestData =
   | AccSignTransactionData
   | AccSignHashData
+  | AccSignPendingTransactionData
   | EthSignHashData
-  | CertenIntentData;
+  | EthSignPersonalMessageData
+  | CertenIntentData
+  | BlsSignHashData;
 
 export interface AccSignTransactionData {
   kind: 'acc_transaction';
@@ -106,10 +129,28 @@ export interface AccSignHashData {
   humanReadable?: HumanReadableTransaction;
 }
 
+export interface AccSignPendingTransactionData {
+  kind: 'acc_pending_transaction';
+  transactionHash: string;            // Hex-encoded transaction hash (64 chars) - for display
+  dataForSignature?: string;          // Complete hash to sign (computed by api-bridge)
+  signerUrl: string;                  // Key page URL (e.g., acc://adi.acme/book/1)
+  signerVersion?: number;             // Key page version (default: 1)
+  timestamp?: number;                 // Microseconds timestamp (generated if not provided)
+  delegators?: string[];              // Optional delegation chain
+  humanReadable?: HumanReadableTransaction;
+}
+
 export interface EthSignHashData {
   kind: 'eth_hash';
   hash: string;                       // 0x-prefixed hex hash
   address: string;                    // Ethereum address
+  humanReadable?: HumanReadableTransaction;
+}
+
+export interface EthSignPersonalMessageData {
+  kind: 'eth_personal_message';
+  message: string;                    // The message to sign (EIP-191 personal_sign)
+  address: string;                    // Ethereum address expected to sign
   humanReadable?: HumanReadableTransaction;
 }
 
@@ -122,6 +163,12 @@ export interface CertenIntentData {
   targetChain?: string;
   targetAddress?: string;
   amount?: string;
+}
+
+export interface BlsSignHashData {
+  kind: 'bls_hash';
+  hash: string;                       // Hex-encoded hash to sign
+  humanReadable?: HumanReadableTransaction;
 }
 
 export interface HumanReadableTransaction {
@@ -145,6 +192,7 @@ export type MessageType =
   | 'GET_KEYS'
   | 'ADD_KEY'
   | 'REMOVE_KEY'
+  | 'UPDATE_KEY_METADATA'
   | 'GET_PENDING_SIGN_REQUEST'
   | 'APPROVE_SIGN_REQUEST'
   | 'REJECT_SIGN_REQUEST';
@@ -234,4 +282,5 @@ export interface SignatureResult {
   signature: string;                  // Hex encoded signature
   publicKey: string;                  // Hex encoded public key
   keyId: string;                      // Key ID used for signing
+  timestamp?: number;                 // Microseconds timestamp used during signing (for pending tx)
 }

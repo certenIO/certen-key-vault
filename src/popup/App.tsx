@@ -7,12 +7,13 @@ import Setup from './pages/Setup';
 import Unlock from './pages/Unlock';
 import KeyList from './pages/KeyList';
 import SignApproval from './pages/SignApproval';
+import KeySelection from './pages/KeySelection';
 
 // =============================================================================
 // Types
 // =============================================================================
 
-type AppMode = 'loading' | 'setup' | 'unlock' | 'main' | 'approve';
+type AppMode = 'loading' | 'setup' | 'unlock' | 'main' | 'approve' | 'select';
 
 interface VaultStatus {
   isInitialized: boolean;
@@ -23,7 +24,7 @@ interface VaultStatus {
 }
 
 interface AppProps {
-  initialMode?: 'setup' | 'unlock' | 'approve' | null;
+  initialMode?: 'setup' | 'unlock' | 'approve' | 'select' | null;
 }
 
 // =============================================================================
@@ -64,6 +65,8 @@ const App: React.FC<AppProps> = ({ initialMode }) => {
       // Determine initial mode
       if (initialMode === 'approve') {
         setMode('approve');
+      } else if (initialMode === 'select') {
+        setMode('select');
       } else if (!response.isInitialized) {
         setMode('setup');
       } else if (!response.isUnlocked) {
@@ -177,6 +180,14 @@ const App: React.FC<AppProps> = ({ initialMode }) => {
       return (
         <SignApproval
           onComplete={handleSignComplete}
+          onCancel={() => setMode('main')}
+        />
+      );
+
+    case 'select':
+      return (
+        <KeySelection
+          onComplete={() => setMode('main')}
           onCancel={() => setMode('main')}
         />
       );

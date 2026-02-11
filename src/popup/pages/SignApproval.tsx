@@ -20,6 +20,8 @@ interface SignApprovalProps {
 // SignApproval Component
 // =============================================================================
 
+type ResultState = 'none' | 'signed' | 'rejected';
+
 const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => {
   const [request, setRequest] = useState<SignRequest | null>(null);
   const [suggestedKeyId, setSuggestedKeyId] = useState<string | undefined>();
@@ -28,6 +30,7 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ResultState>('none');
 
   // Load pending request and keys on mount
   useEffect(() => {
@@ -70,6 +73,23 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
     }
   };
 
+  /**
+   * Shows result feedback and closes the window after a delay.
+   */
+  const showResultAndClose = (resultType: 'signed' | 'rejected') => {
+    setResult(resultType);
+    setTimeout(() => {
+      // Try to close the window (works for popup windows)
+      window.close();
+      // Fallback if window.close() doesn't work (e.g., in extension popup)
+      if (resultType === 'signed') {
+        onComplete();
+      } else {
+        onCancel();
+      }
+    }, 1500);
+  };
+
   const handleApprove = async () => {
     if (!selectedKeyId || !request) return;
 
@@ -84,16 +104,16 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
       });
 
       if (response.success) {
-        onComplete();
+        showResultAndClose('signed');
       } else {
         setError(response.error?.message || 'Failed to sign');
+        setProcessing(false);
       }
     } catch (err) {
       setError('Failed to sign');
       console.error(err);
+      setProcessing(false);
     }
-
-    setProcessing(false);
   };
 
   const handleReject = async () => {
@@ -107,10 +127,10 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
         requestId: request.id,
         reason: 'User rejected'
       });
-      onCancel();
+      showResultAndClose('rejected');
     } catch (err) {
       console.error('Failed to reject:', err);
-      onCancel();
+      showResultAndClose('rejected');
     }
   };
 
@@ -123,6 +143,11 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
   // Filter keys by type based on request
   const getFilteredKeys = (): StoredKey[] => {
     if (!request) return keys;
+
+    // For BLS requests, show BLS12-381 keys
+    if (request.type.startsWith('bls_')) {
+      return keys.filter(k => k.type === 'bls12381');
+    }
 
     // For Accumulate requests, show ED25519 keys
     if (request.type.startsWith('acc_') || request.type === 'certen_signIntent') {
@@ -177,6 +202,19 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
       }
     }
 
+    // Handle acc_hash (two-phase signing)
+    if (data.kind === 'acc_hash') {
+      if (data.humanReadable?.action) {
+        details.push({ label: 'Action', value: data.humanReadable.action });
+      }
+      if (data.humanReadable?.memo) {
+        details.push({ label: 'Details', value: data.humanReadable.memo });
+      }
+      if (data.signerUrl) {
+        details.push({ label: 'Signer', value: truncate(data.signerUrl, 30) });
+      }
+    }
+
     // Always show hash
     const hash = data.transactionHash || data.hash || data.intentId;
     if (hash) {
@@ -197,6 +235,30 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
           <div className="loading">
             <div className="spinner" />
             <p className="mt-16">Loading request...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show result feedback before closing
+  if (result !== 'none') {
+    return (
+      <div className="app-container">
+        <div className="content">
+          <div className={`result-feedback ${result}`}>
+            <div className="result-icon">
+              {result === 'signed' ? '✓' : '✕'}
+            </div>
+            <h2 className="result-title">
+              {result === 'signed' ? 'Signed!' : 'Rejected'}
+            </h2>
+            <p className="result-message">
+              {result === 'signed'
+                ? 'Transaction has been signed successfully.'
+                : 'Request was rejected.'}
+            </p>
+            <p className="result-closing">Closing...</p>
           </div>
         </div>
       </div>
@@ -261,7 +323,9 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
               <div className="empty-state" style={{ padding: '16px' }}>
                 <p>No compatible keys found</p>
                 <p className="form-hint">
-                  {request.type.startsWith('eth_')
+                  {request.type.startsWith('bls_')
+                    ? 'Add a BLS12-381 (Validator) key'
+                    : request.type.startsWith('eth_')
                     ? 'Add an Ethereum (secp256k1) key'
                     : 'Add an Accumulate (ED25519) key'}
                 </p>
@@ -275,12 +339,12 @@ const SignApproval: React.FC<SignApprovalProps> = ({ onComplete, onCancel }) => 
                     onClick={() => setSelectedKeyId(key.id)}
                   >
                     <div className="key-icon">
-                      {key.type === 'ed25519' ? '🌐' : '💎'}
+                      {key.type === 'ed25519' ? '🌐' : key.type === 'secp256k1' ? '💎' : '🔐'}
                     </div>
                     <div className="key-info">
                       <div className="key-name">{key.name}</div>
                       <div className="key-address">
-                        {truncate(key.metadata.accumulateUrl || key.metadata.evmAddress || key.publicKey, 24)}
+                        {truncate(key.metadata.accumulateUrl || key.metadata.evmAddress || key.metadata.blsPublicKey || key.publicKey, 24)}
                       </div>
                     </div>
                     {selectedKeyId === key.id && (

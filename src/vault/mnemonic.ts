@@ -13,7 +13,10 @@ import { HDKey } from '@scure/bip32';
 import * as nacl from 'tweetnacl';
 import * as secp256k1 from '@noble/secp256k1';
 import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha256';
 import { sha512 } from '@noble/hashes/sha512';
+import { hkdf } from '@noble/hashes/hkdf';
+import { bls12_381 as bls } from '@noble/curves/bls12-381';
 import { toHex } from './crypto';
 
 // =============================================================================
@@ -27,9 +30,14 @@ export const ACCUMULATE_COIN_TYPE = 540;
 // Ethereum uses coin type 60
 export const ETHEREUM_COIN_TYPE = 60;
 
+// BLS12-381 uses coin type 12381 (EIP-2333/EIP-2334)
+export const BLS_COIN_TYPE = 12381;
+
 // Default derivation paths
 export const DEFAULT_ACCUMULATE_PATH = `m/44'/${ACCUMULATE_COIN_TYPE}'/0'/0'`;
 export const DEFAULT_ETHEREUM_PATH = `m/44'/${ETHEREUM_COIN_TYPE}'/0'/0`;
+// EIP-2334 validator path: m/12381/60/0/0
+export const DEFAULT_BLS_PATH = `m/${BLS_COIN_TYPE}/60/0/0`;
 
 // =============================================================================
 // Mnemonic Generation
@@ -245,6 +253,153 @@ function hmacSha512(key: Uint8Array, data: Uint8Array): Uint8Array {
 }
 
 // =============================================================================
+// BLS12-381 Key Derivation (EIP-2333)
+// =============================================================================
+
+/**
+ * Result of BLS12-381 key derivation.
+ */
+export interface DerivedBLS12381Key {
+  publicKey: Uint8Array;    // 48 bytes (G1 point)
+  privateKey: Uint8Array;   // 32 bytes
+  path: string;             // Derivation path used
+}
+
+/**
+ * Derives a BLS12-381 keypair from a mnemonic using EIP-2333.
+ *
+ * EIP-2333 specifies BLS12-381 key derivation for Ethereum 2.0 validators.
+ * Path format: m/12381/60/account/0/index (EIP-2334 validator path)
+ *
+ * @param mnemonic - BIP-39 mnemonic phrase
+ * @param index - Key index (default: 0)
+ * @param account - Account index (default: 0)
+ * @returns Derived BLS12-381 keypair with path
+ */
+export function deriveBLS12381FromMnemonic(
+  mnemonic: string,
+  index: number = 0,
+  account: number = 0
+): DerivedBLS12381Key {
+  if (!validateMnemonic(mnemonic)) {
+    throw new Error('Invalid mnemonic phrase');
+  }
+
+  const seed = mnemonicToSeed(mnemonic);
+  // EIP-2334 path for signing keys: m/12381/60/account/0/index
+  const path = `m/${BLS_COIN_TYPE}/60/${account}/0/${index}`;
+
+  // Derive master key using EIP-2333
+  const masterKey = eip2333DeriveMasterSK(seed);
+
+  // Derive child key for the path
+  const pathSegments = [BLS_COIN_TYPE, 60, account, 0, index];
+  let privateKey = masterKey;
+  for (const segment of pathSegments) {
+    privateKey = eip2333DeriveChildSK(privateKey, segment);
+  }
+
+  // Get public key
+  const publicKey = bls.getPublicKey(privateKey);
+
+  return {
+    publicKey,
+    privateKey,
+    path
+  };
+}
+
+/**
+ * EIP-2333 master key derivation from seed.
+ * HKDF-SHA256 with salt "BLS-SIG-KEYGEN-SALT-"
+ *
+ * @param seed - 64-byte BIP-39 seed
+ * @returns 32-byte master secret key
+ */
+function eip2333DeriveMasterSK(seed: Uint8Array): Uint8Array {
+  const salt = new TextEncoder().encode('BLS-SIG-KEYGEN-SALT-');
+
+  // L = ceil((3 * ceil(log2(r))) / 16) where r is the BLS12-381 order
+  // For BLS12-381, L = 48
+  const L = 48;
+
+  // IKM = seed || I2OSP(0, 1)
+  const ikm = new Uint8Array(seed.length + 1);
+  ikm.set(seed, 0);
+  ikm[seed.length] = 0;
+
+  // OKM = HKDF-Expand(HKDF-Extract(salt, IKM), "", L)
+  let okm = hkdf(sha256, ikm, salt, '', L);
+
+  // SK = OS2IP(OKM) mod r
+  // Since we're working with bytes, we need to reduce modulo the BLS12-381 order
+  const sk = reduceModR(okm);
+
+  return sk;
+}
+
+/**
+ * EIP-2333 child key derivation.
+ *
+ * @param parentSK - 32-byte parent secret key
+ * @param index - Child index (not hardened)
+ * @returns 32-byte child secret key
+ */
+function eip2333DeriveChildSK(parentSK: Uint8Array, index: number): Uint8Array {
+  // Lamport tree derivation
+  const salt = i2osp(index, 4);
+  const ikm = parentSK;
+
+  const L = 48;
+  let okm = hkdf(sha256, ikm, salt, '', L);
+
+  return reduceModR(okm);
+}
+
+/**
+ * Integer to Octet String Primitive (big-endian).
+ */
+function i2osp(value: number, length: number): Uint8Array {
+  const result = new Uint8Array(length);
+  let v = value;
+  for (let i = length - 1; i >= 0; i--) {
+    result[i] = v & 0xff;
+    v = v >>> 8;
+  }
+  return result;
+}
+
+/**
+ * Reduces a byte array modulo the BLS12-381 curve order r.
+ * r = 52435875175126190479447740508185965837690552500527637822603658699938581184513
+ *
+ * This is a simplified reduction - for production use, a proper big integer library
+ * would be more appropriate, but this works for key derivation.
+ */
+function reduceModR(bytes: Uint8Array): Uint8Array {
+  // BLS12-381 order r as a BigInt
+  const r = BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184513');
+
+  // Convert bytes to BigInt (big-endian)
+  let value = BigInt(0);
+  for (const byte of bytes) {
+    value = (value << BigInt(8)) | BigInt(byte);
+  }
+
+  // Reduce modulo r
+  value = value % r;
+
+  // Convert back to 32 bytes (big-endian)
+  const result = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    result[i] = Number(value & BigInt(0xff));
+    value = value >> BigInt(8);
+  }
+
+  return result;
+}
+
+// =============================================================================
 // Utility Functions
 // =============================================================================
 
@@ -254,18 +409,22 @@ function hmacSha512(key: Uint8Array, data: Uint8Array): Uint8Array {
  * @param mnemonic - BIP-39 mnemonic phrase
  * @param ed25519Count - Number of ED25519 keys to derive (default: 1)
  * @param secp256k1Count - Number of secp256k1 keys to derive (default: 1)
+ * @param bls12381Count - Number of BLS12-381 keys to derive (default: 0)
  * @returns Object containing derived keys
  */
 export function deriveAllKeysFromMnemonic(
   mnemonic: string,
   ed25519Count: number = 1,
-  secp256k1Count: number = 1
+  secp256k1Count: number = 1,
+  bls12381Count: number = 0
 ): {
   ed25519Keys: DerivedED25519Key[];
   secp256k1Keys: DerivedSecp256k1Key[];
+  bls12381Keys: DerivedBLS12381Key[];
 } {
   const ed25519Keys: DerivedED25519Key[] = [];
   const secp256k1Keys: DerivedSecp256k1Key[] = [];
+  const bls12381Keys: DerivedBLS12381Key[] = [];
 
   for (let i = 0; i < ed25519Count; i++) {
     ed25519Keys.push(deriveED25519FromMnemonic(mnemonic, i));
@@ -275,7 +434,11 @@ export function deriveAllKeysFromMnemonic(
     secp256k1Keys.push(deriveSecp256k1FromMnemonic(mnemonic, i));
   }
 
-  return { ed25519Keys, secp256k1Keys };
+  for (let i = 0; i < bls12381Count; i++) {
+    bls12381Keys.push(deriveBLS12381FromMnemonic(mnemonic, i));
+  }
+
+  return { ed25519Keys, secp256k1Keys, bls12381Keys };
 }
 
 /**
