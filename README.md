@@ -79,8 +79,8 @@ If you don't have Node.js 18+ installed (`node -v` to check):
 
 ```bash
 # Clone repository
-git clone https://github.com/certenIO/key-vault-signer.git
-cd key-vault-signer
+git clone https://github.com/certenIO/certen-key-vault.git
+cd certen-key-vault
 
 # Install dependencies
 npm install

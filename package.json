@@ -6,8 +6,8 @@
   "scripts": {
     "icons": "node scripts/generate-icons.js",
     "dev": "webpack --mode development --watch",
-    "build": "webpack --mode production && npm run icons",
-    "build:dev": "webpack --mode development && npm run icons",
+    "build": "webpack --mode production",
+    "build:dev": "webpack --mode development",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint src --ext .ts,.tsx",
